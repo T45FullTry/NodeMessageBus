@@ -91,6 +91,33 @@ export interface EventBridge {
   createdAt: string;
   eventsRouted: number;
   lastRoutedAt?: string;
+  schedule?: BridgeSchedule;
+}
+
+export interface BridgeSchedule {
+  id: string;
+  type: 'rate' | 'cron' | 'onetime';
+  enabled: boolean;
+  createdAt: string;
+  lastTriggeredAt?: string;
+  nextTriggerAt?: string;
+  triggerCount: number;
+  config: RateConfig | CronConfig | OneTimeConfig;
+}
+
+export interface RateConfig {
+  interval: number;
+  unit: 'seconds' | 'minutes' | 'hours' | 'days';
+}
+
+export interface CronConfig {
+  expression: string; // e.g., "0 10 * * *" (UTC)
+  timezone: string; // e.g., "UTC", "America/New_York"
+}
+
+export interface OneTimeConfig {
+  scheduledAt: string; // ISO 8601 timestamp
+  triggered: boolean;
 }
 
 export interface MeshStats {

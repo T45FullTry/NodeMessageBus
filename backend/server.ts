@@ -180,7 +180,20 @@ let eventBridges: EventBridge[] = [
     active: true,
     createdAt: new Date().toISOString(),
     eventsRouted: 5230,
-    lastRoutedAt: new Date(Date.now() - 10000).toISOString()
+    lastRoutedAt: new Date(Date.now() - 10000).toISOString(),
+    schedule: {
+      id: uuidv4(),
+      type: 'rate',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      lastTriggeredAt: new Date(Date.now() - 300000).toISOString(),
+      nextTriggerAt: new Date(Date.now() + 300000).toISOString(),
+      triggerCount: 142,
+      config: {
+        interval: 5,
+        unit: 'minutes'
+      }
+    }
   },
   {
     id: uuidv4(),
@@ -191,7 +204,20 @@ let eventBridges: EventBridge[] = [
     active: true,
     createdAt: new Date().toISOString(),
     eventsRouted: 1823,
-    lastRoutedAt: new Date(Date.now() - 60000).toISOString()
+    lastRoutedAt: new Date(Date.now() - 60000).toISOString(),
+    schedule: {
+      id: uuidv4(),
+      type: 'cron',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      lastTriggeredAt: new Date(Date.now() - 3600000).toISOString(),
+      nextTriggerAt: new Date(Date.now() + 3600000).toISOString(),
+      triggerCount: 24,
+      config: {
+        expression: '0 * * * *',
+        timezone: 'UTC'
+      }
+    }
   },
   {
     id: uuidv4(),
@@ -202,7 +228,19 @@ let eventBridges: EventBridge[] = [
     filter: 'priority > 5',
     active: false,
     createdAt: new Date().toISOString(),
-    eventsRouted: 0
+    eventsRouted: 0,
+    schedule: {
+      id: uuidv4(),
+      type: 'onetime',
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      nextTriggerAt: new Date(Date.now() + 86400000).toISOString(),
+      triggerCount: 0,
+      config: {
+        scheduledAt: new Date(Date.now() + 86400000).toISOString(),
+        triggered: false
+      }
+    }
   }
 ];
 
@@ -532,6 +570,86 @@ app.post('/api/mesh/bridges/:id/route', (req: Request, res: Response) => {
   bridge.lastRoutedAt = new Date().toISOString();
   logEvent('bridge', 'event_routed', id, bridge.name, `Event: ${JSON.stringify(eventData)}`);
   res.json({ success: true, routedAt: bridge.lastRoutedAt });
+});
+
+// Bridge Schedule Management
+app.post('/api/mesh/bridges/:id/schedule', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { type, config, enabled } = req.body;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge) return res.status(404).json({ error: 'Bridge not found' });
+  
+  let nextTriggerAt: string | undefined;
+  if (type === 'onetime') {
+    nextTriggerAt = (config as OneTimeConfig).scheduledAt;
+  } else if (type === 'rate') {
+    const rateConfig = config as RateConfig;
+    const ms = rateConfig.interval * (rateConfig.unit === 'seconds' ? 1000 : rateConfig.unit === 'minutes' ? 60000 : rateConfig.unit === 'hours' ? 3600000 : 86400000);
+    nextTriggerAt = new Date(Date.now() + ms).toISOString();
+  } else if (type === 'cron') {
+    // Simplified: next trigger is approximate
+    nextTriggerAt = new Date(Date.now() + 3600000).toISOString();
+  }
+  
+  bridge.schedule = {
+    id: uuidv4(),
+    type,
+    enabled: enabled !== false,
+    createdAt: new Date().toISOString(),
+    nextTriggerAt,
+    triggerCount: 0,
+    config
+  };
+  
+  logEvent('bridge', 'schedule_created', id, bridge.name, `Type: ${type}`);
+  res.status(201).json(bridge.schedule);
+});
+
+app.put('/api/mesh/bridges/:id/schedule', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { enabled, config } = req.body;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge || !bridge.schedule) return res.status(404).json({ error: 'Bridge or schedule not found' });
+  
+  if (enabled !== undefined) bridge.schedule.enabled = enabled;
+  if (config) bridge.schedule.config = config;
+  
+  logEvent('bridge', 'schedule_updated', id, bridge.name);
+  res.json(bridge.schedule);
+});
+
+app.delete('/api/mesh/bridges/:id/schedule', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge || !bridge.schedule) return res.status(404).json({ error: 'Bridge or schedule not found' });
+  
+  bridge.schedule = undefined;
+  logEvent('bridge', 'schedule_deleted', id, bridge.name);
+  res.status(204).send();
+});
+
+app.post('/api/mesh/bridges/:id/schedule/trigger', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge || !bridge.schedule) return res.status(404).json({ error: 'Bridge or schedule not found' });
+  
+  bridge.schedule.triggerCount += 1;
+  bridge.schedule.lastTriggeredAt = new Date().toISOString();
+  
+  // Calculate next trigger
+  if (bridge.schedule.type === 'rate') {
+    const rateConfig = bridge.schedule.config as RateConfig;
+    const ms = rateConfig.interval * (rateConfig.unit === 'seconds' ? 1000 : rateConfig.unit === 'minutes' ? 60000 : rateConfig.unit === 'hours' ? 3600000 : 86400000);
+    bridge.schedule.nextTriggerAt = new Date(Date.now() + ms).toISOString();
+  } else if (bridge.schedule.type === 'onetime') {
+    const oneTimeConfig = bridge.schedule.config as OneTimeConfig;
+    oneTimeConfig.triggered = true;
+    bridge.schedule.enabled = false;
+    bridge.schedule.nextTriggerAt = undefined;
+  }
+  
+  logEvent('bridge', 'schedule_triggered', id, bridge.name, `Trigger #${bridge.schedule.triggerCount}`);
+  res.json(bridge.schedule);
 });
 
 // WebSocket for real-time updates

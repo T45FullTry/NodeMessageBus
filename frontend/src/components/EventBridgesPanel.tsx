@@ -1,5 +1,5 @@
 import { EventBridge, MeshNode } from '../../shared/types';
-import { GitMerge, ArrowRight, Filter, Zap, Clock, ToggleLeft, ToggleRight } from 'lucide-react';
+import { GitMerge, ArrowRight, Filter, Zap, Clock, ToggleLeft, ToggleRight, Calendar, Repeat, CalendarOff } from 'lucide-react';
 
 interface EventBridgesPanelProps {
   bridges: EventBridge[];
@@ -23,6 +23,35 @@ function EventBridgesPanel({ bridges, nodes, setBridges }: EventBridgesPanelProp
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  const formatScheduleType = (type: string) => {
+    switch (type) {
+      case 'rate': return 'Rate-based';
+      case 'cron': return 'Cron-based';
+      case 'onetime': return 'One-time';
+      default: return type;
+    }
+  };
+
+  const getScheduleIcon = (type: string) => {
+    switch (type) {
+      case 'rate': return <Repeat className="w-3 h-3" />;
+      case 'cron': return <Calendar className="w-3 h-3" />;
+      case 'onetime': return <CalendarOff className="w-3 h-3" />;
+      default: return <Clock className="w-3 h-3" />;
+    }
+  };
+
+  const formatScheduleConfig = (type: string, config: any) => {
+    if (type === 'rate') {
+      return `Every ${config.interval} ${config.unit}`;
+    } else if (type === 'cron') {
+      return `${config.expression} (${config.timezone})`;
+    } else if (type === 'onetime') {
+      return new Date(config.scheduledAt).toLocaleString('en-GB');
+    }
+    return '';
   };
 
   if (bridges.length === 0) {
@@ -95,7 +124,7 @@ function EventBridgesPanel({ bridges, nodes, setBridges }: EventBridgesPanelProp
             </div>
 
             {/* Stats */}
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center justify-between text-sm mb-3">
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-1">
                   <Zap className="w-3 h-3 text-gray-400" />
@@ -130,6 +159,34 @@ function EventBridgesPanel({ bridges, nodes, setBridges }: EventBridgesPanelProp
                 )}
               </button>
             </div>
+
+            {/* Schedule Info */}
+            {bridge.schedule && (
+              <div className="bg-gray-50 rounded-lg p-3 mt-3 border border-gray-200">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    {getScheduleIcon(bridge.schedule.type)}
+                    <span className="text-sm font-medium text-gray-700">{formatScheduleType(bridge.schedule.type)}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded ${bridge.schedule.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
+                      {bridge.schedule.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  <span className="text-xs text-gray-500">Triggered: {bridge.schedule.triggerCount} times</span>
+                </div>
+                
+                <div className="flex items-center justify-between text-xs text-gray-600">
+                  <span className="font-mono">{formatScheduleConfig(bridge.schedule.type, bridge.schedule.config)}</span>
+                  <div className="flex items-center space-x-3">
+                    {bridge.schedule.lastTriggeredAt && (
+                      <span>Last: {formatTimeAgo(bridge.schedule.lastTriggeredAt)}</span>
+                    )}
+                    {bridge.schedule.nextTriggerAt && (
+                      <span className="text-blue-600">Next: {formatTimeAgo(bridge.schedule.nextTriggerAt)}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ))}
