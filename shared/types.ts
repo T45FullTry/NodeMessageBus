@@ -60,9 +60,44 @@ export interface DashboardStats {
 export interface EventLog {
   id: string;
   timestamp: string;
-  type: 'listener' | 'receiver' | 'queue';
+  type: 'listener' | 'receiver' | 'queue' | 'bridge' | 'mesh';
   action: string;
   entityId: string;
   entityName: string;
   details?: string;
+}
+
+export interface MeshNode {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  status: 'online' | 'offline' | 'degraded';
+  role: 'bridge' | 'node' | 'hub';
+  connectedAt?: string;
+  lastHeartbeat?: string;
+  eventsRelayed: number;
+  latency?: number;
+}
+
+export interface EventBridge {
+  id: string;
+  name: string;
+  sourceNode: string;
+  targetNodes: string[];
+  eventType: string;
+  filter?: string;
+  active: boolean;
+  createdAt: string;
+  eventsRouted: number;
+  lastRoutedAt?: string;
+}
+
+export interface MeshStats {
+  totalNodes: number;
+  onlineNodes: number;
+  totalBridges: number;
+  activeBridges: number;
+  eventsRelayed: number;
+  avgLatency: number;
 }

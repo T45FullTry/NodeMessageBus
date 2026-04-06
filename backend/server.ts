@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import { EventListener, Receiver, Queue, QueueItem, DashboardStats, EventLog } from '../shared/types';
+import { EventListener, Receiver, Queue, QueueItem, DashboardStats, EventLog, MeshNode, EventBridge, MeshStats } from '../shared/types';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -121,6 +121,91 @@ let queues: Queue[] = [
 
 let eventLogs: EventLog[] = [];
 
+let meshNodes: MeshNode[] = [
+  {
+    id: uuidv4(),
+    name: 'Primary Hub',
+    host: '192.168.1.100',
+    port: 3001,
+    status: 'online',
+    role: 'hub',
+    connectedAt: new Date(Date.now() - 86400000).toISOString(),
+    lastHeartbeat: new Date().toISOString(),
+    eventsRelayed: 15234,
+    latency: 12
+  },
+  {
+    id: uuidv4(),
+    name: 'Edge Node 1',
+    host: '192.168.1.101',
+    port: 3002,
+    status: 'online',
+    role: 'node',
+    connectedAt: new Date(Date.now() - 43200000).toISOString(),
+    lastHeartbeat: new Date(Date.now() - 5000).toISOString(),
+    eventsRelayed: 8421,
+    latency: 25
+  },
+  {
+    id: uuidv4(),
+    name: 'Bridge Server',
+    host: '192.168.1.102',
+    port: 3003,
+    status: 'degraded',
+    role: 'bridge',
+    connectedAt: new Date(Date.now() - 21600000).toISOString(),
+    lastHeartbeat: new Date(Date.now() - 30000).toISOString(),
+    eventsRelayed: 3210,
+    latency: 150
+  },
+  {
+    id: uuidv4(),
+    name: 'Offline Node',
+    host: '192.168.1.103',
+    port: 3004,
+    status: 'offline',
+    role: 'node',
+    lastHeartbeat: new Date(Date.now() - 3600000).toISOString(),
+    eventsRelayed: 1205
+  }
+];
+
+let eventBridges: EventBridge[] = [
+  {
+    id: uuidv4(),
+    name: 'User Events Bridge',
+    sourceNode: meshNodes[0].id,
+    targetNodes: [meshNodes[1].id, meshNodes[2].id],
+    eventType: 'user.*',
+    active: true,
+    createdAt: new Date().toISOString(),
+    eventsRouted: 5230,
+    lastRoutedAt: new Date(Date.now() - 10000).toISOString()
+  },
+  {
+    id: uuidv4(),
+    name: 'Payment Events Bridge',
+    sourceNode: meshNodes[0].id,
+    targetNodes: [meshNodes[2].id],
+    eventType: 'payment.*',
+    active: true,
+    createdAt: new Date().toISOString(),
+    eventsRouted: 1823,
+    lastRoutedAt: new Date(Date.now() - 60000).toISOString()
+  },
+  {
+    id: uuidv4(),
+    name: 'Analytics Bridge',
+    sourceNode: meshNodes[1].id,
+    targetNodes: [meshNodes[0].id],
+    eventType: 'analytics.*',
+    filter: 'priority > 5',
+    active: false,
+    createdAt: new Date().toISOString(),
+    eventsRouted: 0
+  }
+];
+
 const logEvent = (type: 'listener' | 'receiver' | 'queue', action: string, entityId: string, entityName: string, details?: string) => {
   const log: EventLog = {
     id: uuidv4(),
@@ -146,6 +231,19 @@ app.get('/api/stats', (req: Request, res: Response) => {
     totalQueueItems: queues.reduce((acc, q) => acc + q.items.length, 0),
     pendingItems: queues.reduce((acc, q) => acc + q.items.filter(i => i.status === 'pending').length, 0),
     failedItems: queues.reduce((acc, q) => acc + q.items.filter(i => i.status === 'failed').length, 0)
+  };
+  res.json(stats);
+});
+
+// Mesh Stats
+app.get('/api/mesh/stats', (req: Request, res: Response) => {
+  const stats: MeshStats = {
+    totalNodes: meshNodes.length,
+    onlineNodes: meshNodes.filter(n => n.status === 'online').length,
+    totalBridges: eventBridges.length,
+    activeBridges: eventBridges.filter(b => b.active).length,
+    eventsRelayed: meshNodes.reduce((acc, n) => acc + n.eventsRelayed, 0),
+    avgLatency: Math.round(meshNodes.filter(n => n.latency).reduce((acc, n) => acc + (n.latency || 0), 0) / meshNodes.filter(n => n.latency).length) || 0
   };
   res.json(stats);
 });
@@ -326,6 +424,116 @@ app.get('/api/logs', (req: Request, res: Response) => {
   res.json(eventLogs.slice(0, limit));
 });
 
+// Mesh Nodes
+app.get('/api/mesh/nodes', (req: Request, res: Response) => res.json(meshNodes));
+
+app.post('/api/mesh/nodes', (req: Request, res: Response) => {
+  const { name, host, port, role } = req.body;
+  const newNode: MeshNode = {
+    id: uuidv4(),
+    name,
+    host,
+    port,
+    status: 'offline',
+    role,
+    createdAt: new Date().toISOString(),
+    eventsRelayed: 0
+  };
+  meshNodes.push(newNode);
+  logEvent('mesh', 'node_added', newNode.id, newNode.name, `Role: ${role}`);
+  res.status(201).json(newNode);
+});
+
+app.put('/api/mesh/nodes/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const index = meshNodes.findIndex(n => n.id === id);
+  if (index === -1) return res.status(404).json({ error: 'Node not found' });
+  meshNodes[index] = { ...meshNodes[index], ...req.body };
+  logEvent('mesh', 'node_updated', id, meshNodes[index].name);
+  res.json(meshNodes[index]);
+});
+
+app.delete('/api/mesh/nodes/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const node = meshNodes.find(n => n.id === id);
+  if (!node) return res.status(404).json({ error: 'Node not found' });
+  meshNodes = meshNodes.filter(n => n.id !== id);
+  logEvent('mesh', 'node_removed', id, node.name);
+  res.status(204).send();
+});
+
+app.post('/api/mesh/nodes/:id/heartbeat', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { latency } = req.body;
+  const node = meshNodes.find(n => n.id === id);
+  if (!node) return res.status(404).json({ error: 'Node not found' });
+  node.lastHeartbeat = new Date().toISOString();
+  node.status = 'online';
+  node.latency = latency;
+  node.eventsRelayed += 1;
+  res.json(node);
+});
+
+// Event Bridges
+app.get('/api/mesh/bridges', (req: Request, res: Response) => res.json(eventBridges));
+
+app.post('/api/mesh/bridges', (req: Request, res: Response) => {
+  const { name, sourceNode, targetNodes, eventType, filter } = req.body;
+  const newBridge: EventBridge = {
+    id: uuidv4(),
+    name,
+    sourceNode,
+    targetNodes,
+    eventType,
+    filter,
+    active: true,
+    createdAt: new Date().toISOString(),
+    eventsRouted: 0
+  };
+  eventBridges.push(newBridge);
+  logEvent('bridge', 'created', newBridge.id, newBridge.name, `Events: ${eventType}`);
+  res.status(201).json(newBridge);
+});
+
+app.put('/api/mesh/bridges/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const index = eventBridges.findIndex(b => b.id === id);
+  if (index === -1) return res.status(404).json({ error: 'Bridge not found' });
+  eventBridges[index] = { ...eventBridges[index], ...req.body };
+  logEvent('bridge', 'updated', id, eventBridges[index].name);
+  res.json(eventBridges[index]);
+});
+
+app.delete('/api/mesh/bridges/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge) return res.status(404).json({ error: 'Bridge not found' });
+  eventBridges = eventBridges.filter(b => b.id !== id);
+  logEvent('bridge', 'deleted', id, bridge.name);
+  res.status(204).send();
+});
+
+app.post('/api/mesh/bridges/:id/toggle', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge) return res.status(404).json({ error: 'Bridge not found' });
+  bridge.active = !bridge.active;
+  logEvent('bridge', 'toggled', id, bridge.name, `Active: ${bridge.active}`);
+  res.json(bridge);
+});
+
+app.post('/api/mesh/bridges/:id/route', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { eventData } = req.body;
+  const bridge = eventBridges.find(b => b.id === id);
+  if (!bridge) return res.status(404).json({ error: 'Bridge not found' });
+  
+  bridge.eventsRouted += 1;
+  bridge.lastRoutedAt = new Date().toISOString();
+  logEvent('bridge', 'event_routed', id, bridge.name, `Event: ${JSON.stringify(eventData)}`);
+  res.json({ success: true, routedAt: bridge.lastRoutedAt });
+});
+
 // WebSocket for real-time updates
 import { WebSocketServer } from 'ws';
 import http from 'http';
@@ -337,7 +545,7 @@ wss.on('connection', (ws) => {
   console.log('Client connected to WebSocket');
   
   // Send initial data
-  ws.send(JSON.stringify({ type: 'init', listeners, receivers, queues }));
+  ws.send(JSON.stringify({ type: 'init', listeners, receivers, queues, meshNodes, eventBridges }));
   
   ws.on('close', () => console.log('Client disconnected'));
 });
